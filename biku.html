@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Biku – Ovozli Navigatsiya</title>
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<style>
+body{margin:0;background:#0f172a;color:#fff;font-family:Arial;text-align:center}
+.container{max-width:480px;margin:auto;padding:16px}
+button,input{width:100%;padding:18px;margin:10px 0;border:none;border-radius:16px;font-size:18px}
+button{background:#2563eb;color:white;font-weight:bold}
+input{background:rgba(255,255,255,.15);color:white}
+#map{height:420px;border-radius:14px;margin-top:10px}
+#status{background:rgba(0,0,0,.5);padding:12px;border-radius:12px}
+</style>
+</head>
+<body>
+
+<div class="container">
+<h2>🔊 BIKU</h2>
+<p>Ko‘zi ojizlar uchun aniq ovozli navigatsiya</p>
+
+<button onclick="startSystem()">▶ BOSHLASH (OVOZNI YOQISH)</button>
+<input id="dest" placeholder="Manzil yozing">
+<button onclick="startNav()">🧭 NAVIGATSIYANI BOSHLASH</button>
+
+<div id="status">Tayyor</div>
+<div id="map"></div>
+</div>
+
+<script>
+let map=L.map('map').setView([41.31,69.28],13);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+
+let currentPos=null,userMarker=null;
+let steps=[],stepIndex=0,routeLine=null;
+let voiceReady=false,spoken=new Set();
+
+function speak(key,text){
+ if(!voiceReady) return;
+ if(spoken.has(key)) return;
+ spoken.add(key);
+ let u=new SpeechSynthesisUtterance(text);
+ u.lang="uz-UZ"; u.rate=0.8;
+ speechSynthesis.cancel();
+ speechSynthesis.speak(u);
+}
+
+function startSystem(){
+ voiceReady=true;
+ speak("start","Ovozli yordam ishga tushdi");
+ navigator.geolocation.watchPosition(p=>{
+   currentPos=p.coords;
+   let lat=p.coords.latitude,lon=p.coords.longitude;
+   if(!userMarker){
+     userMarker=L.marker([lat,lon]).addTo(map);
+     map.setView([lat,lon],17);
+     fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}`)
+       .then(r=>r.json())
+       .then(d=>{
+         speak("loc","Siz hozir "+(d.display_name||"nomaʼlum joy")+"dasiz");
+         status(d.display_name);
+       });
+   }else userMarker.setLatLng([lat,lon]);
+ },()=>alert("Joy aniqlanmadi"),{enableHighAccuracy:true});
+}
+
+function status(t){document.getElementById("status").innerText=t}
+
+async function startNav(){
+ if(!currentPos){alert("Joy aniqlanmadi");return}
+ spoken.clear();
+
+ let dest=document.getElementById("dest").value;
+ if(!dest){speak("no","Manzil kiriting");return}
+
+ let g=await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${dest}&limit=1`).then(r=>r.json());
+ if(!g[0]){speak("nf","Manzil topilmadi");return}
+
+ let r=await fetch(`https://router.project-osrm.org/route/v1/foot/${currentPos.longitude},${currentPos.latitude};${g[0].lon},${g[0].lat}?steps=true&geometries=geojson`).then(r=>r.json());
+
+ steps=r.routes[0].legs[0].steps;
+ stepIndex=0;
+
+ let coords=r.routes[0].geometry.coordinates.map(c=>[c[1],c[0]]);
+ if(routeLine) map.removeLayer(routeLine);
+ routeLine=L.polyline(coords,{color:'cyan',weight:6}).addTo(map);
+ map.fitBounds(routeLine.getBounds());
+
+ speak("go","Harakatni boshlang");
+ status("Navigatsiya boshlandi");
+
+ setInterval(()=>{
+  if(stepIndex>=steps.length){
+    speak("arr","Manzilga yetdingiz");
+    status("Yetib keldingiz");
+    return;
+  }
+  let s=steps[stepIndex];
+  let [lon,lat]=s.maneuver.location;
+  let d=Math.hypot(currentPos.latitude-lat,currentPos.longitude-lon)*111000;
+  if(d<15){
+    if(s.maneuver.modifier==="left") speak("l"+stepIndex,"Chapga buriling");
+    else if(s.maneuver.modifier==="right") speak("r"+stepIndex,"O‘ngga buriling");
+    else speak("f"+stepIndex,"Oldinga yuring");
+    stepIndex++;
+  }
+ },1500);
+}
+</script>
+</body>
+</html>
